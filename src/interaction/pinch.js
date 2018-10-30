@@ -21,7 +21,7 @@ class Pinch extends Interaction {
       maxScale: null,
       _timestamp: 0,
       limitRange: {},
-      sensitivity: 3,
+      sensitivity: 1,
       zoomCumulativeDelta: 0
     });
   }
@@ -145,11 +145,7 @@ class Pinch extends Interaction {
       }
 
       if (xScale.isCategory) { // 横轴为分类类型
-        if (xScale.type === 'timeCat') {
-          self._zoomTimeCatScale(xScale, diff, center);
-        } else {
-          self._zoomCatScale(xScale, diff, center);
-        }
+        self._zoomCatScale(xScale, diff, center);
       } else if (xScale.isLinear) {
         self._zoomLinearScale(xScale, diff, center, 'x');
       }
@@ -210,50 +206,6 @@ class Pinch extends Interaction {
       nice: false
     }));
   }
-  // 针对事件类型
-  _zoomTimeCatScale(scale, zoom, center) {
-    const { field, values } = scale;
-    const chart = this.chart;
-    const coord = chart.get('coord');
-    const colDef = Helper.getColDef(chart, field);
-
-    if (!this.originTicks) { // TODO: Need to be optimized
-      this.originTicks = scale.ticks;
-    }
-
-    const originTicks = this.originTicks;
-    const originValues = this.limitRange[field];
-    const originValuesLen = originValues.length;
-    const maxScale = this.maxScale || 4;
-    const minScale = this.minScale || 1;
-    const minCount = originValuesLen / maxScale;
-    const maxCount = originValuesLen / minScale;
-
-    const valuesLength = values.length;
-    const offsetPoint = coord.invertPoint(center);
-    const percent = offsetPoint.x;
-    const deltaCount = parseInt(valuesLength * Math.abs(zoom - 1));
-    const minDelta = parseInt(deltaCount * (percent));
-    const maxDelta = deltaCount - minDelta;
-
-    if (zoom >= 1 && valuesLength > minCount) { // zoom out
-      const newValues = values.slice(minDelta, valuesLength - maxDelta);
-      chart.scale(field, Util.mix({}, colDef, {
-        values: newValues,
-        ticks: originTicks
-      }));
-    } else if (zoom < 1 && valuesLength < maxCount) { // zoom in
-      const firstIndex = originValues.indexOf(values[0]);
-      const lastIndex = originValues.indexOf(values[valuesLength - 1]);
-      const minIndex = Math.max(0, firstIndex - minDelta);
-      const maxIndex = Math.min(lastIndex + maxDelta, originValuesLen);
-      const newValues = originValues.slice(minIndex, maxIndex);
-      chart.scale(field, Util.mix({}, colDef, {
-        values: newValues,
-        ticks: originTicks
-      }));
-    }
-  }
 
   // 针对分类类型
   _zoomCatScale(scale, zoom, center) {
@@ -284,26 +236,28 @@ class Pinch extends Interaction {
     const centerPointer = center.x;
 
     if (Math.abs(zoomCumulativeDelta) > sensitivity) {
+      const deltaCount = Math.max(1, parseInt(values.length * Math.abs(zoom - 1)));
+
       if (zoomCumulativeDelta < 0) {
         if (centerPointer >= chartCenter) {
           if (minIndex <= 0) {
-            maxIndex = Math.min(lastLabelIndex, maxIndex + 1);
+            maxIndex = Math.min(lastLabelIndex, maxIndex + deltaCount);
           } else {
-            minIndex = Math.max(0, minIndex - 1);
+            minIndex = Math.max(0, minIndex - deltaCount);
           }
         } else if (centerPointer < chartCenter) {
           if (maxIndex >= lastLabelIndex) {
-            minIndex = Math.max(0, minIndex - 1);
+            minIndex = Math.max(0, minIndex - deltaCount);
           } else {
-            maxIndex = Math.min(lastLabelIndex, maxIndex + 1);
+            maxIndex = Math.min(lastLabelIndex, maxIndex + deltaCount);
           }
         }
         this.zoomCumulativeDelta = 0;
       } else if (zoomCumulativeDelta > 0) {
         if (centerPointer >= chartCenter) {
-          minIndex = minIndex < maxIndex ? minIndex = Math.min(maxIndex, minIndex + 1) : minIndex;
+          minIndex = minIndex < maxIndex ? minIndex = Math.min(maxIndex, minIndex + deltaCount) : minIndex;
         } else if (centerPointer < chartCenter) {
-          maxIndex = maxIndex > minIndex ? maxIndex = Math.max(minIndex, maxIndex - 1) : maxIndex;
+          maxIndex = maxIndex > minIndex ? maxIndex = Math.max(minIndex, maxIndex - deltaCount) : maxIndex;
         }
         this.zoomCumulativeDelta = 0;
       }
