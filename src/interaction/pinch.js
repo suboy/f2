@@ -20,7 +20,9 @@ class Pinch extends Interaction {
       minScale: null,
       maxScale: null,
       _timestamp: 0,
-      limitRange: {}
+      limitRange: {},
+      sensitivity: 3,
+      zoomCumulativeDelta: 0
     });
   }
 
@@ -143,7 +145,11 @@ class Pinch extends Interaction {
       }
 
       if (xScale.isCategory) { // 横轴为分类类型
-        self._zoomCatScale(xScale, diff, center);
+        if (xScale.type === 'timeCat') {
+          self._zoomTimeCatScale(xScale, diff, center);
+        } else {
+          self._zoomCatScale(xScale, diff, center);
+        }
       } else if (xScale.isLinear) {
         self._zoomLinearScale(xScale, diff, center, 'x');
       }
@@ -204,14 +210,14 @@ class Pinch extends Interaction {
       nice: false
     }));
   }
-
-  _zoomCatScale(scale, zoom, center) {
+  // 针对事件类型
+  _zoomTimeCatScale(scale, zoom, center) {
     const { field, values } = scale;
     const chart = this.chart;
     const coord = chart.get('coord');
     const colDef = Helper.getColDef(chart, field);
 
-    if (!this.originTicks) { // Need to be optimized
+    if (!this.originTicks) { // TODO: Need to be optimized
       this.originTicks = scale.ticks;
     }
 
@@ -230,18 +236,79 @@ class Pinch extends Interaction {
     const minDelta = parseInt(deltaCount * (percent));
     const maxDelta = deltaCount - minDelta;
 
-    if (zoom >= 1 && valuesLength >= minCount) { // zoom out
+    if (zoom >= 1 && valuesLength > minCount) { // zoom out
       const newValues = values.slice(minDelta, valuesLength - maxDelta);
       chart.scale(field, Util.mix({}, colDef, {
         values: newValues,
         ticks: originTicks
       }));
-    } else if (zoom < 1 && valuesLength <= maxCount) { // zoom in
+    } else if (zoom < 1 && valuesLength < maxCount) { // zoom in
       const firstIndex = originValues.indexOf(values[0]);
       const lastIndex = originValues.indexOf(values[valuesLength - 1]);
       const minIndex = Math.max(0, firstIndex - minDelta);
       const maxIndex = Math.min(lastIndex + maxDelta, originValuesLen);
       const newValues = originValues.slice(minIndex, maxIndex);
+      chart.scale(field, Util.mix({}, colDef, {
+        values: newValues,
+        ticks: originTicks
+      }));
+    }
+  }
+
+  // 针对分类类型
+  _zoomCatScale(scale, zoom, center) {
+    let zoomCumulativeDelta = this.zoomCumulativeDelta;
+    const sensitivity = this.sensitivity;
+    zoomCumulativeDelta = zoom > 1 ? zoomCumulativeDelta + 1 : zoomCumulativeDelta - 1;
+    this.zoomCumulativeDelta = zoomCumulativeDelta;
+
+    const { field, values } = scale;
+    const chart = this.chart;
+    const coord = chart.get('coord');
+    const colDef = Helper.getColDef(chart, field);
+
+    if (!this.originTicks) { // TODO：Need to be optimized
+      this.originTicks = scale.ticks;
+    }
+
+    const originTicks = this.originTicks;
+    const originValues = this.limitRange[field];
+    const originValuesLen = originValues.length;
+    const firstValue = values[0];
+    const lastValue = values[values.length - 1];
+
+    let minIndex = originValues.indexOf(firstValue);
+    const lastLabelIndex = originValuesLen - 1;
+    let maxIndex = originValues.indexOf(lastValue);
+    const chartCenter = (coord.start.x + coord.end.x) / 2;
+    const centerPointer = center.x;
+
+    if (Math.abs(zoomCumulativeDelta) > sensitivity) {
+      if (zoomCumulativeDelta < 0) {
+        if (centerPointer >= chartCenter) {
+          if (minIndex <= 0) {
+            maxIndex = Math.min(lastLabelIndex, maxIndex + 1);
+          } else {
+            minIndex = Math.max(0, minIndex - 1);
+          }
+        } else if (centerPointer < chartCenter) {
+          if (maxIndex >= lastLabelIndex) {
+            minIndex = Math.max(0, minIndex - 1);
+          } else {
+            maxIndex = Math.min(lastLabelIndex, maxIndex + 1);
+          }
+        }
+        this.zoomCumulativeDelta = 0;
+      } else if (zoomCumulativeDelta > 0) {
+        if (centerPointer >= chartCenter) {
+          minIndex = minIndex < maxIndex ? minIndex = Math.min(maxIndex, minIndex + 1) : minIndex;
+        } else if (centerPointer < chartCenter) {
+          maxIndex = maxIndex > minIndex ? maxIndex = Math.max(minIndex, maxIndex - 1) : maxIndex;
+        }
+        this.zoomCumulativeDelta = 0;
+      }
+
+      const newValues = originValues.slice(minIndex, maxIndex + 1);
       chart.scale(field, Util.mix({}, colDef, {
         values: newValues,
         ticks: originTicks
